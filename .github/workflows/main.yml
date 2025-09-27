@@ -1,0 +1,123 @@
+name: build xiaomi-mt6833 ShirokoNeko&Xinran-Kernel
+
+on:
+  workflow_dispatch:  
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setting kernel buildtools
+      run: |
+        sudo apt-get update
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl dos2unix zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+    - name: Download Gcc compiler
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        
+        mkdir gcc64
+        wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc64/ -zxvf gcc-aarch64.tar.gz
+    
+        mkdir gcc32
+        wget -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc32/ -zxvf gcc-arm.tar.gz
+
+    - name: Download Clang compiler
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        mkdir clang-aosp
+        git clone -q --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0 clang-aosp
+
+    - name: Download kernel source
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --recursive https://github.com/Winkmoon/kernel_xiaomi_mt6833-ShirokoNeko.git \
+          -b 安卓16-los \
+          --depth 1 android-kernel
+        cd android-kernel
+
+    - name: Update ksu
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        rm -rf KernelSU
+        curl -LSs "https://raw.githubusercontent.com/Winkmoon/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        cd KernelSU-Next
+        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+        cd ..
+        # Configure kernel options
+        echo "CONFIG_MODULE_SIG=n" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_MODULE_SIG_ALL=n" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_MODULES=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KERNELSU_DEBUG=n" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KSU=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> ./arch/arm64/configs/everpal_defconfig
+        sed -i '/atomic_set(&current->seccomp.filter_count, 0);/d' drivers/kernelsu/core_hook.c
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: build-kernel-mido-kernel
+        max-size: 5G
+
+    - name: Start compiling kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc32/bin:$PATH
+        export KBUILD_BUILD_HOST=Xinran_LOVE_Bai
+        export KBUILD_BUILD_USER=kuan-@Xinran_StarBai
+        make -s -j$(nproc --all) O=out ARCH=arm64 everpal_defconfig
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- LD=ld.lld
+
+    - name: Create Anykernel3 flashable zip
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/Winkmoon/AnyKernel3
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+        cd AnyKernel3
+        zip -r ../ShirokoNeko-kernel-mt6833.zip .
+
+    - name: Generate version number
+      id: version
+      run: |
+        echo "RELEASE_VERSION=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+        echo "TAG_NAME=v$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: xiaomi6833@Xinran_StarBai-build-output
+        path: |
+          kernel_workspace/ShirokoNeko-kernel-mt6833.zip
+          kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: xiaomi6833@Xinran_StarBai-${{ env.RELEASE_VERSION }}
+        body: |
+          Xiaomi mt6853 device ShirokoNeko kernel
+          Version: ${{ env.RELEASE_VERSION }}
+          Supported features:
+          - Integrated KSU full branch manager support
+          - Docker containerization support
+          - LXC virtualization
+          - KVM hardware virtualization
+          - Kali Nethunter penetration testing environment
+          - Merged Android 16-BPF
+          
+          Compilation information:
+          - Kernel version: Based on mt6833 platform
+          - Applicable system: Android 16 unofficial system
+          - Supported models: Xiaomi mt6833 series
+        files: |
+          kernel_workspace/ShirokoNeko-kernel-mt6833.zip
+          kernel_workspace/android-kernel/out/arch/arm64/boot/Image.gz
