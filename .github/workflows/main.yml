@@ -1,5 +1,4 @@
 name: build xiaomi-mt6833 ShirokoNeko&Xinran-Kernel
-            支持ksu docker lxc kvm Kali-Nethunter
 
 on:
   workflow_dispatch:  
