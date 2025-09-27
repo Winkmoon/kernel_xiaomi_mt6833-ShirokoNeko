@@ -1,0 +1,142 @@
+name: 编译mt6833 xiaomikernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+
+
+    - name: 构建编译内核环境
+      run: |
+        sudo apt-get update
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl dos2unix zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+
+
+    - name: 下载 Gcc编译器
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        
+        mkdir gcc64
+        wget -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc64/ -zxvf gcc-aarch64.tar.gz
+    
+        mkdir gcc32
+        wget -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc32/ -zxvf gcc-arm.tar.gz
+    
+    - name: 下载Clang编译器
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        mkdir clang-aosp
+        git clone -q --depth=1 https://github.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-6443078 -b 10.0 clang-aosp
+    
+
+    #- name: 下载内核模块源码
+      #run: |
+        #cd $GITHUB_WORKSPACE/kernel_workspace
+        #git clone https://github.com/2481849298/android_kernel_modules_mt6885-6853.git vendor
+        #mkdir vnd
+        #cp -r vendor vnd/
+           
+              
+    - name: 下载内核源码
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone --depth=1 https://github.com/Winkmoon/kernel_xiaomi_mt6833-ShirokoNeko.git -b 安卓16-los xinran
+        cd xinran
+        rm -rf KernelSU
+        rm -rf KernelSU-Next
+        curl -LSs "https://raw.githubusercontent.com/Winkmoon/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        cd KernelSU-Next
+        KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" 10200)
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
+        export KSU_VERSION=$KSU_VERSION
+        sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+        cd ..
+        echo "CONFIG_MODULE_SIG=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_MODULE_SIG_ALL=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_MODULES=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KERNELSU_DEBUG=n" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KSU=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_TRACEPOINT_HOOK=y" >> ./arch/arm64/configs/everpal_defconfig
+        echo "CONFIG_KERNELSU=y" >> ./arch/arm64/configs/everpal_defconfig
+        sed -i '/atomic_set(&current->seccomp.filter_count, 0);/d' drivers/kernelsu/core_hook.c
+
+              
+    - name: 设置ccache缓存
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: build-kernel-mido-kernel
+        max-size: 5G
+
+ 
+    - name: 开始编译内核
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/xinran
+        echo CONFIG_LOCALVERSION=\"-Xinran_StarBai_note10-a16bpf\" >> arch/arm64/configs/everpal_defconfig
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc64/bin:$GITHUB_WORKSPACE/kernel_workspace/gcc32/bin:$PATH
+        export KBUILD_BUILD_USER=XinRan♡
+        export KBUILD_BUILD_HOST=Bai   
+        make -s -j$(nproc --all) O=out ARCH=arm64 everpal_defconfig
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- LD=ld.lld
+                
+
+    - name: 制作Anykernel3卡刷包
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/Winkmoon/AnyKernel3
+        cp xinran/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md    
+    
+    - name: 上传 Anykernel3
+      uses: actions/upload-artifact@v4
+      with:
+        name: Xinran_StarBai-xiaomimt6833
+        path: kernel_workspace/AnyKernel3/*  
+
+    - name: 上传编译内核
+      uses: actions/upload-artifact@v4
+      with:
+        name: Xinran_StarBai-xiaomimt6833-Image.gz-dtb
+        path: kernel_workspace/xinran/out/arch/arm64/boot/Image.gz-dtb
+
+
+    - name: 打包发布文件
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        cp Xinran_StarBai-xiaomimt6833.zip ./Xinran_StarBai-xiaomimt6833.zip
+        cp xinran/out/arch/arm64/boot/Image.gz-dtb ./Xinran_StarBai-xiaomimt6833-Image.gz-dtb
+
+    - name: 创建GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.sha }}
+        name: Xinran Kernel Build ${{ github.run_number }}
+        body: |
+          支持特性：
+            - 集成KSU全分支管理器支持
+            - Docker容器化支持
+            - LXC虚拟化
+            - KVM硬件虚拟化
+            - Kali Nethunter渗透测试环境
+            - 合并安卓16-BPF
+            
+          编译信息：
+            - 内核版本：基于mt6833平台
+            - 适用系统：安卓16非官方系统
+            - 支持机型：xiaomi 理论mt6833全系
+        files: |
+          $GITHUB_WORKSPACE/kernel_workspace/Xinran_StarBai-xiaomimt6833.zip
+          $GITHUB_WORKSPACE/kernel_workspace/Xinran_StarBai-xiaomimt6833-Image.gz-dtb
+        draft: false
+        prerelease: false
